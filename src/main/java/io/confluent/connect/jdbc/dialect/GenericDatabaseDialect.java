@@ -235,11 +235,26 @@ public class GenericDatabaseDialect implements DatabaseDialect {
     Properties properties = new Properties();
     if (username != null) {
       properties.setProperty("user", username);
+      /* 알티베이스는 JDBC3.0 스펙이라 자동 로딩이 안되기 때문에 수동으로 로드.
+         Auto- loading of JDBC driver class: In JDBC 4 invoking the getConnection()
+         on DriverManager will automatically load a driver. Upon loading the driver,
+         an instance of the driver is created and the registerDriver()
+         method is invoked to make that driver available to clients.
+      */
+      if (username.equals("g2")) {
+        try {
+          Class.forName("Altibase.jdbc.driver.AltibaseDriver");
+          glog.info("{} 알티베이스 드라이버 로드 완료. {}", username, jdbcUrl);
+        } catch (ClassNotFoundException e) {
+          glog.error("알티베이스 드라이버 로드 중 오류가 발생하였습니다. {}", jdbcUrl, e);
+        }
+      }
     }
     if (dbPassword != null) {
       properties.setProperty("password", dbPassword.value());
     }
     properties = addConnectionProperties(properties);
+
     // Timeout is 40 seconds to be as long as possible for customer to have a long connection
     // handshake, while still giving enough time to validate once in the follower worker,
     // and again in the leader worker and still be under 90s REST serving timeout
@@ -248,6 +263,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
     if (jdbcDriverInfo == null) {
       jdbcDriverInfo = createJdbcDriverInfo(connection);
     }
+    glog.info("JDBC Driver Info {}", jdbcDriverInfo);
     connections.add(connection);
     return connection;
   }
@@ -269,7 +285,8 @@ public class GenericDatabaseDialect implements DatabaseDialect {
       Connection connection,
       int timeout
   ) throws SQLException {
-    if (jdbcDriverInfo().jdbcMajorVersion() >= 4) {
+    if (jdbcDriverInfo().jdbcMajorVersion() >= 4
+        && !"Altibase".equals(jdbcDriverInfo().productName())) {
       return connection.isValid(timeout);
     }
     // issue a test query ...
@@ -390,6 +407,7 @@ public class GenericDatabaseDialect implements DatabaseDialect {
   @Override
   public TableId parseTableIdentifier(String fqn) {
     List<String> parts = identifierRules().parseQualifiedIdentifier(fqn);
+    glog.info("FQN 파츠: {}", parts);
     if (parts.isEmpty()) {
       throw new IllegalArgumentException("Invalid fully qualified name: '" + fqn + "'");
     }
@@ -397,6 +415,9 @@ public class GenericDatabaseDialect implements DatabaseDialect {
       return new TableId(null, null, parts.get(0));
     }
     if (parts.size() == 3) {
+      if ("mydb".equals(parts.get(0))) {
+        return new TableId(null, parts.get(1), parts.get(2));
+      }
       return new TableId(parts.get(0), parts.get(1), parts.get(2));
     }
     assert parts.size() >= 2;
